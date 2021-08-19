@@ -1,0 +1,10 @@
+A small library to automatically detect a change in on-disk TLS
+certificates, and switch to the new certificate without interrupting
+existing connections.  It will generate an in-memory self-signed
+certificate if none is find on-disk, which makes HTTPS just as easy and
+resilient as HTTP.
+
+Used by Galene, https://galene.org
+
+-- Juliusz Chroboczek
+
