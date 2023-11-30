@@ -1,6 +1,9 @@
 package cert
 
 import (
+	"crypto/tls"
+	"io"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -105,4 +108,84 @@ func BenchmarkGet(b *testing.B) {
 			b.Errorf("Get: %v", err)
 		}
 	}
+}
+
+func BenchmarkTLS(b *testing.B) {
+	cert := New("/no/such/file", "/no/such/file")
+
+	l, err := tls.Listen("tcp", ":8443", &tls.Config{
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return cert.Get()
+		},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer l.Close()
+
+	go func() {
+		buf := make([]byte, 100)
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+			c.Read(buf)
+		}
+	}()
+
+	conf := &tls.Config{InsecureSkipVerify: true}
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		conn, err := tls.Dial("tcp", "127.0.0.1:8443", conf)
+		if err != nil {
+			b.Fatal(err)
+		}
+		conn.Close()
+	}
+}
+
+func BenchmarkHTTP(b *testing.B) {
+	cert := New("/no/such/file", "/no/such/file")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte{'\n'})
+	})
+
+	s := http.Server{
+		Addr: ":8443",
+		TLSConfig: &tls.Config{
+			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				return cert.Get()
+			},
+		},
+		Handler: mux,
+	}
+
+	go s.ListenAndServeTLS("", "")
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		req, err := http.NewRequest("GET", "https://localhost:8443", nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		req.Close = true
+		rep, err := client.Do(req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		io.Copy(io.Discard, rep.Body)
+		rep.Body.Close()
+	}
+
+	s.Close()
 }
